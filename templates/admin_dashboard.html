@@ -1,0 +1,437 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Dashboard - AutoRescue{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="fas fa-tachometer-alt"></i> Admin Dashboard</h2>
+            <div class="d-flex align-items-center">
+                <span class="badge bg-danger me-2" id="pendingCount">0 Pending</span>
+                <button class="btn btn-outline-primary btn-sm" onclick="loadAlerts()">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 id="totalAlerts">0</h4>
+                        <p class="mb-0">Total Alerts</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-exclamation-triangle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 id="pendingAlerts">0</h4>
+                        <p class="mb-0">Pending</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-clock fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 id="dispatchedAlerts">0</h4>
+                        <p class="mb-0">Dispatched</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-ambulance fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4 id="resolvedAlerts">0</h4>
+                        <p class="mb-0">Resolved</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-check-circle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Alerts List -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-list"></i> Recent Alerts</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Type</th>
+                                <th>Location</th>
+                                <th>Time</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alertsTableBody">
+                            <tr>
+                                <td colspan="6" class="text-center text-muted">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading alerts...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map and Alert Details -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-map-marker-alt"></i> Alert Location</h5>
+            </div>
+            <div class="card-body">
+                <div id="mapContainer" class="map-container bg-light d-flex align-items-center justify-content-center">
+                    <div class="text-center text-muted">
+                        <i class="fas fa-map fa-3x mb-2"></i>
+                        <p>Select an alert to view location</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5><i class="fas fa-info-circle"></i> Alert Details</h5>
+            </div>
+            <div class="card-body" id="alertDetails">
+                <p class="text-muted">No alert selected</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Alert Modal -->
+<div class="modal fade" id="alertModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Alert Management</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="alertModalBody">
+                <!-- Alert details will be loaded here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-info" id="verifyBtn" onclick="verifyAlert()">
+                    <i class="fas fa-check"></i> Verify
+                </button>
+                <button type="button" class="btn btn-primary" id="dispatchBtn" onclick="dispatchAlert()">
+                    <i class="fas fa-paper-plane"></i> Dispatch
+                </button>
+                <button type="button" class="btn btn-success" id="resolveBtn" onclick="resolveAlert()">
+                    <i class="fas fa-check-circle"></i> Resolve
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentAlertId = null;
+let alerts = [];
+
+// Load alerts from API
+async function loadAlerts() {
+    try {
+        const response = await fetch('/api/alerts');
+        alerts = await response.json();
+        
+        updateStatistics();
+        updateAlertsTable();
+        
+    } catch (error) {
+        console.error('Error loading alerts:', error);
+        showAlert('Error loading alerts: ' + error.message, 'danger');
+    }
+}
+
+// Update statistics
+function updateStatistics() {
+    const total = alerts.length;
+    const pending = alerts.filter(a => a.status === 'pending').length;
+    const dispatched = alerts.filter(a => a.status === 'dispatched').length;
+    const resolved = alerts.filter(a => a.resolved).length;
+    
+    document.getElementById('totalAlerts').textContent = total;
+    document.getElementById('pendingAlerts').textContent = pending;
+    document.getElementById('dispatchedAlerts').textContent = dispatched;
+    document.getElementById('resolvedAlerts').textContent = resolved;
+    document.getElementById('pendingCount').textContent = `${pending} Pending`;
+}
+
+// Update alerts table
+function updateAlertsTable() {
+    const tbody = document.getElementById('alertsTableBody');
+    
+    if (alerts.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted">
+                    <i class="fas fa-inbox fa-2x mb-2"></i>
+                    <p>No alerts found</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = alerts.map(alert => `
+        <tr onclick="selectAlert(${alert.id})" style="cursor: pointer;">
+            <td>#${alert.id}</td>
+            <td>
+                <span class="badge ${alert.alert_type === 'Accident' ? 'bg-danger' : 'bg-warning'}">
+                    ${alert.alert_type}
+                </span>
+            </td>
+            <td>
+                <small>${alert.latitude.toFixed(4)}, ${alert.longitude.toFixed(4)}</small>
+            </td>
+            <td>
+                <small>${new Date(alert.timestamp).toLocaleString()}</small>
+            </td>
+            <td>
+                <span class="badge status-${alert.status}">
+                    ${alert.status.charAt(0).toUpperCase() + alert.status.slice(1)}
+                </span>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); openAlertModal(${alert.id})">
+                    <i class="fas fa-eye"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Select alert for map view
+function selectAlert(alertId) {
+    const alert = alerts.find(a => a.id === alertId);
+    if (!alert) return;
+    
+    currentAlertId = alertId;
+    
+    // Update map display (simplified - in real app, use Google Maps API)
+    const mapContainer = document.getElementById('mapContainer');
+    mapContainer.innerHTML = `
+        <div class="text-center">
+            <i class="fas fa-map-marker-alt fa-3x text-danger mb-2"></i>
+            <p><strong>Alert #${alert.id}</strong></p>
+            <p>Lat: ${alert.latitude.toFixed(6)}</p>
+            <p>Lng: ${alert.longitude.toFixed(6)}</p>
+            <small class="text-muted">Click "View Details" for full map</small>
+        </div>
+    `;
+    
+    // Update alert details
+    document.getElementById('alertDetails').innerHTML = `
+        <h6>Alert #${alert.id}</h6>
+        <p><strong>Type:</strong> ${alert.alert_type}</p>
+        <p><strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}</p>
+        <p><strong>Location:</strong> ${alert.latitude.toFixed(6)}, ${alert.longitude.toFixed(6)}</p>
+        <p><strong>Details:</strong> ${alert.details}</p>
+        ${alert.impact_magnitude ? `<p><strong>Impact:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+        <p><strong>Status:</strong> 
+            <span class="badge status-${alert.status}">${alert.status.charAt(0).toUpperCase() + alert.status.slice(1)}</span>
+        </p>
+    `;
+}
+
+// Open alert modal
+function openAlertModal(alertId) {
+    const alert = alerts.find(a => a.id === alertId);
+    if (!alert) return;
+    
+    currentAlertId = alertId;
+    
+    document.getElementById('alertModalBody').innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Alert Information</h6>
+                <p><strong>ID:</strong> #${alert.id}</p>
+                <p><strong>Type:</strong> ${alert.alert_type}</p>
+                <p><strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}</p>
+                <p><strong>Status:</strong> 
+                    <span class="badge status-${alert.status}">${alert.status.charAt(0).toUpperCase() + alert.status.slice(1)}</span>
+                </p>
+            </div>
+            <div class="col-md-6">
+                <h6>Location Details</h6>
+                <p><strong>Latitude:</strong> ${alert.latitude.toFixed(6)}</p>
+                <p><strong>Longitude:</strong> ${alert.longitude.toFixed(6)}</p>
+                <p><strong>Details:</strong> ${alert.details}</p>
+                ${alert.impact_magnitude ? `<p><strong>Impact Magnitude:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-12">
+                <h6>Response Actions</h6>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Next Steps:</strong>
+                    <ol class="mb-0 mt-2">
+                        <li>Verify the alert authenticity</li>
+                        <li>Dispatch to nearest police and ambulance</li>
+                        <li>Monitor response and mark as resolved</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Update button visibility based on status
+    const verifyBtn = document.getElementById('verifyBtn');
+    const dispatchBtn = document.getElementById('dispatchBtn');
+    const resolveBtn = document.getElementById('resolveBtn');
+    
+    verifyBtn.style.display = alert.status === 'pending' ? 'inline-block' : 'none';
+    dispatchBtn.style.display = alert.status === 'verified' ? 'inline-block' : 'none';
+    resolveBtn.style.display = alert.status === 'dispatched' ? 'inline-block' : 'none';
+    
+    new bootstrap.Modal(document.getElementById('alertModal')).show();
+}
+
+// Verify alert
+async function verifyAlert() {
+    if (!currentAlertId) return;
+    
+    try {
+        const response = await fetch(`/api/alerts/${currentAlertId}/verify`, {
+            method: 'PATCH'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('Alert verified successfully!', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('alertModal')).hide();
+            loadAlerts();
+        } else {
+            showAlert('Error verifying alert: ' + result.message, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('Error verifying alert:', error);
+        showAlert('Error verifying alert: ' + error.message, 'danger');
+    }
+}
+
+// Dispatch alert
+async function dispatchAlert() {
+    if (!currentAlertId) return;
+    
+    try {
+        const response = await fetch(`/api/alerts/${currentAlertId}/dispatch`, {
+            method: 'PATCH'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('Alert dispatched to responders!', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('alertModal')).hide();
+            loadAlerts();
+        } else {
+            showAlert('Error dispatching alert: ' + result.message, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('Error dispatching alert:', error);
+        showAlert('Error dispatching alert: ' + error.message, 'danger');
+    }
+}
+
+// Resolve alert
+async function resolveAlert() {
+    if (!currentAlertId) return;
+    
+    try {
+        const response = await fetch(`/api/alerts/${currentAlertId}/resolve`, {
+            method: 'PATCH'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('Alert resolved successfully!', 'success');
+            bootstrap.Modal.getInstance(document.getElementById('alertModal')).hide();
+            loadAlerts();
+        } else {
+            showAlert('Error resolving alert: ' + result.message, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('Error resolving alert:', error);
+        showAlert('Error resolving alert: ' + error.message, 'danger');
+    }
+}
+
+// Show alert message
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.querySelector('.container').insertBefore(alertDiv, document.querySelector('.container').firstChild);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+// Auto-refresh every 30 seconds
+setInterval(loadAlerts, 30000);
+
+// Load alerts on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadAlerts();
+});
+</script>
+{% endblock %}

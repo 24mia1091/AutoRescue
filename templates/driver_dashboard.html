@@ -1,0 +1,695 @@
+{% extends "base.html" %}
+
+{% block title %}Driver Dashboard - AutoRescue{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="fas fa-car"></i> Driver Dashboard</h2>
+            <div class="d-flex align-items-center">
+                <span class="me-3">Monitoring Status:</span>
+                <span class="monitoring-indicator monitoring-inactive" id="monitoringStatus"></span>
+                <span id="monitoringText">Inactive</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Monitoring Controls -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-satellite-dish"></i> Motion Monitoring</h5>
+            </div>
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <div class="alert alert-info" id="permissionInfo">
+                        <i class="fas fa-info-circle"></i>
+                        <strong>Mobile Users:</strong> This app requires motion sensor and location permissions. 
+                        Please allow access when prompted for full functionality.
+                    </div>
+                    <div class="alert alert-warning" id="permissionWarning" style="display: none;">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <strong>Permissions Required:</strong> Please enable motion sensor and location access in your browser settings.
+                    </div>
+                </div>
+                
+                <button class="btn btn-success btn-lg mb-3" id="startMonitoring" onclick="startMonitoring()">
+                    <i class="fas fa-play"></i> Start Monitoring
+                </button>
+                
+                <button class="btn btn-danger btn-lg mb-3" id="stopMonitoring" onclick="stopMonitoring()" style="display: none;">
+                    <i class="fas fa-stop"></i> Stop Monitoring
+                </button>
+                
+                <div class="mt-3">
+                    <button class="btn btn-outline-primary btn-sm" onclick="testMotionDetection()">
+                        <i class="fas fa-vial"></i> Test Motion Detection
+                    </button>
+                </div>
+                
+                <div class="mt-3">
+                    <small class="text-muted">
+                        <i class="fas fa-info-circle"></i>
+                        Keep this page open for continuous monitoring
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual SOS -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-exclamation-triangle"></i> Emergency SOS</h5>
+            </div>
+            <div class="card-body text-center">
+                <p class="text-muted mb-3">In case of emergency, manually trigger SOS alert</p>
+                <button class="sos-button" id="manualSOS" onclick="sendManualSOS()">
+                    <i class="fas fa-exclamation-triangle"></i> SEND SOS
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sensor Data Display -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-chart-line"></i> Sensor Data</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>Acceleration</h6>
+                            <div class="h4 text-primary" id="accelerationValue">0.0 m/s²</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>Rotation Rate</h6>
+                            <div class="h4 text-info" id="rotationValue">0.0 °/s</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>Threshold</h6>
+                            <div class="h4 text-warning">25.0 m/s²</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>Location</h6>
+                            <div class="small" id="locationValue">Not available</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Alerts -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-history"></i> Recent Alerts</h5>
+            </div>
+            <div class="card-body">
+                <div id="alertsList">
+                    <div class="text-center text-muted">
+                        <i class="fas fa-inbox fa-2x mb-2"></i>
+                        <p>No alerts yet</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let isMonitoring = false;
+let watchId = null;
+let lastAcceleration = 0;
+let lastRotation = 0;
+let accelerationHistory = [];
+const ACCELERATION_THRESHOLD = 25.0; // m/s²
+const SMOOTHING_WINDOW = 5;
+let motionEventSeen = false;
+let motionSupportCheckTimer = null;
+let gyroSensor = null;
+let gyroSensorActive = false;
+
+// Start monitoring motion sensors
+async function startMonitoring() {
+    try {
+        console.log('Starting motion monitoring...');
+        
+        // If DeviceMotionEvent is missing, don't block; some browsers still fire events behind flags/vendors
+        if (typeof window.DeviceMotionEvent === 'undefined') {
+            console.warn('DeviceMotionEvent symbol is undefined; proceeding to attach listeners anyway.');
+        }
+
+        // Request permission for device motion (iOS 13+)
+        if (typeof window.DeviceMotionEvent !== 'undefined' && typeof window.DeviceMotionEvent.requestPermission === 'function') {
+            console.log('Requesting motion sensor permission...');
+            try {
+                const permission = await window.DeviceMotionEvent.requestPermission();
+                console.log('Motion permission result:', permission);
+                if (permission !== 'granted') {
+                    alert('Motion sensor permission denied. Please enable it in your browser settings for accident detection.');
+                    return;
+                }
+            } catch (permissionError) {
+                console.warn('Permission request failed:', permissionError);
+                // Continue anyway, some browsers don't require explicit permission
+            }
+        }
+
+        // Request geolocation permission
+        if (navigator.geolocation) {
+            console.log('Requesting location permission...');
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    console.log('Location access granted');
+                    updateLocation(position);
+                },
+                (error) => {
+                    console.warn('Location access denied:', error);
+                    // Continue without location for now
+                },
+                { enableHighAccuracy: false, timeout: 5000 }
+            );
+        }
+
+        // Start motion monitoring
+        console.log('Adding motion event listeners...');
+        window.addEventListener('devicemotion', handleMotion, true);
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        
+        // Start Generic Sensor API Gyroscope if available (requires HTTPS)
+        if (typeof window.Gyroscope !== 'undefined') {
+            try {
+                gyroSensor = new Gyroscope({ frequency: 30 });
+                gyroSensor.addEventListener('reading', () => {
+                    // x/y/z are angular velocity in rad/s per spec; convert to deg/s for consistency with rotationRate
+                    const alpha = (gyroSensor.z || 0) * (180 / Math.PI);
+                    const beta  = (gyroSensor.x || 0) * (180 / Math.PI);
+                    const gamma = (gyroSensor.y || 0) * (180 / Math.PI);
+                    const rotationMagnitude = Math.sqrt(alpha*alpha + beta*beta + gamma*gamma);
+                    lastRotation = rotationMagnitude;
+                    const el = document.getElementById('rotationValue');
+                    if (el) el.textContent = rotationMagnitude.toFixed(1) + ' °/s';
+                    motionEventSeen = true;
+                });
+                gyroSensor.addEventListener('error', (event) => {
+                    console.warn('Gyroscope sensor error:', event.error && event.error.name);
+                });
+                gyroSensor.start();
+                gyroSensorActive = true;
+                console.log('Gyroscope sensor started');
+            } catch (e) {
+                console.warn('Failed to start Gyroscope sensor (HTTPS required?):', e);
+                if (!window.isSecureContext) {
+                    const warn = document.getElementById('permissionWarning');
+                    if (warn) {
+                        warn.style.display = 'block';
+                        warn.innerHTML = `
+                            <i class=\"fas fa-lock\"></i>
+                            <strong>Secure context required:</strong> Gyroscope API needs HTTPS. Use https (or ngrok) for full sensor support.`;
+                    }
+                }
+            }
+        }
+
+        isMonitoring = true;
+        updateMonitoringUI();
+        
+        // Start geolocation watching with fallback options
+        if (navigator.geolocation) {
+            watchId = navigator.geolocation.watchPosition(
+                updateLocation,
+                (error) => {
+                    console.warn('Location error:', error);
+                    // Try with less strict options
+                    if (watchId) {
+                        navigator.geolocation.clearWatch(watchId);
+                    }
+                    watchId = navigator.geolocation.watchPosition(
+                        updateLocation,
+                        (fallbackError) => console.warn('Fallback location error:', fallbackError),
+                        { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+                    );
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        }
+        
+        console.log('Motion monitoring started successfully');
+        showAlert('Motion monitoring started! Shake your device to test detection.', 'success');
+
+        // If no motion event arrives within 6s, show guidance
+        motionEventSeen = false;
+        if (motionSupportCheckTimer) {
+            clearTimeout(motionSupportCheckTimer);
+        }
+        motionSupportCheckTimer = setTimeout(() => {
+            if (!motionEventSeen && isMonitoring) {
+                const helpHtml = `
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>No motion data received.</strong><br>
+                    - Ensure the page is opened over HTTPS (required on iOS).<br>
+                    - On Android Chrome: Settings → Site settings → Motion sensors → Allow.<br>
+                    - On iOS Safari: Settings → Safari → Motion & Orientation Access → On.<br>
+                    - Try Chrome (Android) or Safari (iOS).<br>
+                    - Tap Start Monitoring again and move the phone.
+                `;
+                const warn = document.getElementById('permissionWarning');
+                if (warn) {
+                    warn.style.display = 'block';
+                    warn.innerHTML = helpHtml;
+                }
+                showAlert('No motion data yet. Check browser settings and permissions.', 'warning');
+            }
+        }, 6000);
+        
+    } catch (error) {
+        console.error('Error starting monitoring:', error);
+        alert('Error starting monitoring: ' + error.message);
+    }
+}
+
+// Stop monitoring
+function stopMonitoring() {
+    window.removeEventListener('devicemotion', handleMotion);
+    window.removeEventListener('deviceorientation', handleOrientation);
+    
+    if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+    }
+    if (motionSupportCheckTimer) {
+        clearTimeout(motionSupportCheckTimer);
+        motionSupportCheckTimer = null;
+    }
+    if (gyroSensor && gyroSensorActive) {
+        try { gyroSensor.stop(); } catch (_) {}
+        gyroSensorActive = false;
+    }
+    
+    isMonitoring = false;
+    updateMonitoringUI();
+}
+
+// Handle motion data
+function handleMotion(event) {
+    if (!isMonitoring) return;
+    
+    console.log('Motion event received:', event);
+    motionEventSeen = true;
+    
+    // Prefer acceleration; fall back to accelerationIncludingGravity if needed
+    let acceleration = event.acceleration;
+    if (!acceleration || (acceleration.x === null && acceleration.y === null && acceleration.z === null)) {
+        acceleration = event.accelerationIncludingGravity || acceleration;
+    }
+    const rotation = event.rotationRate;
+    
+    if (acceleration) {
+        // Calculate magnitude of acceleration vector
+        const magnitude = Math.sqrt(
+            Math.pow(acceleration.x || 0, 2) +
+            Math.pow(acceleration.y || 0, 2) +
+            Math.pow(acceleration.z || 0, 2)
+        );
+        
+        console.log('Raw acceleration:', acceleration, 'Magnitude:', magnitude);
+        
+        // Apply smoothing
+        accelerationHistory.push(magnitude);
+        if (accelerationHistory.length > SMOOTHING_WINDOW) {
+            accelerationHistory.shift();
+        }
+        
+        const smoothedMagnitude = accelerationHistory.reduce((a, b) => a + b, 0) / accelerationHistory.length;
+        lastAcceleration = smoothedMagnitude;
+        
+        // Update UI
+        document.getElementById('accelerationValue').textContent = smoothedMagnitude.toFixed(1) + ' m/s²';
+        
+        // Check for accident
+        if (smoothedMagnitude > ACCELERATION_THRESHOLD) {
+            console.log('Accident detected! Magnitude:', smoothedMagnitude);
+            sendAccidentAlert(smoothedMagnitude);
+        }
+    }
+    
+    if (rotation) {
+        const rotationMagnitude = Math.sqrt(
+            Math.pow(rotation.alpha || 0, 2) +
+            Math.pow(rotation.beta || 0, 2) +
+            Math.pow(rotation.gamma || 0, 2)
+        );
+        lastRotation = rotationMagnitude;
+        document.getElementById('rotationValue').textContent = rotationMagnitude.toFixed(1) + ' °/s';
+        console.log('Rotation:', rotation, 'Magnitude:', rotationMagnitude);
+    }
+}
+
+// Test motion detection
+function testMotionDetection() {
+    console.log('Testing motion detection...');
+    
+    if (!isMonitoring) {
+        alert('Please start monitoring first to test motion detection.');
+        return;
+    }
+    
+    // Simulate a high acceleration event for testing
+    const testAcceleration = {
+        x: 30,
+        y: 20,
+        z: 10
+    };
+    
+    const testEvent = {
+        acceleration: testAcceleration,
+        rotationRate: { alpha: 0, beta: 0, gamma: 0 }
+    };
+    
+    console.log('Simulating test motion event...');
+    handleMotion(testEvent);
+    
+    showAlert('Test motion event simulated! Check if accident detection triggers.', 'info');
+}
+
+// Handle orientation data
+function handleOrientation(event) {
+    if (!isMonitoring) return;
+    // Additional orientation-based detection can be added here
+}
+
+// Update location display
+function updateLocation(position) {
+    const lat = position.coords.latitude.toFixed(6);
+    const lng = position.coords.longitude.toFixed(6);
+    document.getElementById('locationValue').textContent = `${lat}, ${lng}`;
+}
+
+// Update monitoring UI
+function updateMonitoringUI() {
+    const statusIndicator = document.getElementById('monitoringStatus');
+    const statusText = document.getElementById('monitoringText');
+    const startBtn = document.getElementById('startMonitoring');
+    const stopBtn = document.getElementById('stopMonitoring');
+    
+    if (isMonitoring) {
+        statusIndicator.className = 'monitoring-indicator monitoring-active';
+        statusText.textContent = 'Active';
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+    } else {
+        statusIndicator.className = 'monitoring-indicator monitoring-inactive';
+        statusText.textContent = 'Inactive';
+        startBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
+    }
+}
+
+// Send accident alert
+async function sendAccidentAlert(magnitude) {
+    try {
+        console.log('Sending accident alert for magnitude:', magnitude);
+        const position = await getCurrentPosition();
+        
+        const alertData = {
+            alert_type: 'Accident',
+            latitude: position.latitude,
+            longitude: position.longitude,
+            details: `Impact magnitude: ${magnitude.toFixed(1)} m/s²`,
+            impact_magnitude: magnitude
+        };
+        
+        console.log('Sending alert data:', alertData);
+        
+        const response = await fetch('/api/alerts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(alertData)
+        });
+        
+        const result = await response.json();
+        console.log('Alert response:', result);
+        
+        if (result.success) {
+            showAlert('Accident detected! SOS alert sent automatically.', 'danger');
+            loadAlerts(); // Refresh alerts list
+        } else {
+            showAlert('Failed to send alert: ' + result.message, 'warning');
+        }
+        
+    } catch (error) {
+        console.error('Error sending accident alert:', error);
+        showAlert('Error sending alert: ' + error.message, 'danger');
+    }
+}
+
+// Send manual SOS
+async function sendManualSOS() {
+    if (!confirm('Are you sure you want to send an emergency SOS alert?')) {
+        return;
+    }
+    
+    try {
+        console.log('Sending manual SOS...');
+        const position = await getCurrentPosition();
+        
+        const alertData = {
+            alert_type: 'Manual SOS',
+            latitude: position.latitude,
+            longitude: position.longitude,
+            details: 'Manual SOS triggered by driver',
+            impact_magnitude: lastAcceleration
+        };
+        
+        console.log('Manual SOS data:', alertData);
+        
+        const response = await fetch('/api/alerts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(alertData)
+        });
+        
+        const result = await response.json();
+        console.log('Manual SOS response:', result);
+        
+        if (result.success) {
+            showAlert('SOS alert sent successfully!', 'success');
+            loadAlerts(); // Refresh alerts list
+        } else {
+            showAlert('Failed to send SOS: ' + result.message, 'warning');
+        }
+        
+    } catch (error) {
+        console.error('Error sending manual SOS:', error);
+        showAlert('Error sending SOS: ' + error.message, 'danger');
+    }
+}
+
+// Get current position with fallback
+function getCurrentPosition() {
+    return new Promise((resolve, reject) => {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    resolve({
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude
+                    });
+                },
+                (error) => {
+                    console.warn('Geolocation error:', error);
+                    
+                    // Check if it's a security error (HTTPS required)
+                    if (error.code === error.PERMISSION_DENIED) {
+                        // Try to get approximate location or use fallback
+                        if (navigator.geolocation.getCurrentPosition) {
+                            // Try with less strict options
+                            navigator.geolocation.getCurrentPosition(
+                                (position) => {
+                                    resolve({
+                                        latitude: position.coords.latitude,
+                                        longitude: position.coords.longitude
+                                    });
+                                },
+                                (fallbackError) => {
+                                    // Use default location as fallback
+                                    console.warn('Using fallback location due to geolocation error');
+                                    resolve({
+                                        latitude: 0.0,
+                                        longitude: 0.0
+                                    });
+                                },
+                                { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+                            );
+                        } else {
+                            // Use default location as fallback
+                            resolve({
+                                latitude: 0.0,
+                                longitude: 0.0
+                            });
+                        }
+                    } else {
+                        // Use default location as fallback for other errors
+                        resolve({
+                            latitude: 0.0,
+                            longitude: 0.0
+                        });
+                    }
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        } else {
+            // Use default location as fallback
+            resolve({
+                latitude: 0.0,
+                longitude: 0.0
+            });
+        }
+    });
+}
+
+// Load alerts
+async function loadAlerts() {
+    try {
+        const response = await fetch('/api/alerts');
+        const alerts = await response.json();
+        
+        const alertsList = document.getElementById('alertsList');
+        
+        if (alerts.length === 0) {
+            alertsList.innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-inbox fa-2x mb-2"></i>
+                    <p>No alerts yet</p>
+                </div>
+            `;
+            return;
+        }
+        
+        alertsList.innerHTML = alerts.map(alert => `
+            <div class="alert alert-card ${alert.resolved ? 'alert-success' : 'alert-warning'}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="alert-heading">
+                            <i class="fas fa-${alert.alert_type === 'Accident' ? 'car-crash' : 'exclamation-triangle'}"></i>
+                            ${alert.alert_type}
+                        </h6>
+                        <p class="mb-1">
+                            <strong>Location:</strong> ${alert.latitude.toFixed(6)}, ${alert.longitude.toFixed(6)}
+                        </p>
+                        <p class="mb-1">
+                            <strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}
+                        </p>
+                        <p class="mb-1">
+                            <strong>Details:</strong> ${alert.details}
+                        </p>
+                        ${alert.impact_magnitude ? `<p class="mb-0"><strong>Impact:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+                    </div>
+                    <div class="text-end">
+                        <span class="badge ${alert.resolved ? 'bg-success' : 'bg-warning'}">
+                            ${alert.resolved ? 'Resolved' : 'Pending'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        
+    } catch (error) {
+        console.error('Error loading alerts:', error);
+    }
+}
+
+// Show alert message
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.querySelector('.container').insertBefore(alertDiv, document.querySelector('.container').firstChild);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+// Check device capabilities and permissions
+function checkDeviceCapabilities() {
+    console.log('Checking device capabilities...');
+    
+    // Check if we're on a mobile device
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    console.log('Is mobile device:', isMobile);
+    
+    // Check DeviceMotion support
+    const motionSupported = typeof DeviceMotionEvent !== 'undefined';
+    console.log('Motion sensors supported:', motionSupported);
+    
+    // Check geolocation support
+    const geoSupported = 'geolocation' in navigator;
+    console.log('Geolocation supported:', geoSupported);
+    
+    // Update UI based on capabilities
+    if (!motionSupported) {
+        document.getElementById('permissionWarning').style.display = 'block';
+        document.getElementById('permissionInfo').style.display = 'none';
+        document.getElementById('permissionWarning').innerHTML = `
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Motion sensors not supported:</strong> This device/browser doesn't support motion sensors required for accident detection.
+        `;
+    } else if (!geoSupported) {
+        document.getElementById('permissionWarning').style.display = 'block';
+        document.getElementById('permissionInfo').style.display = 'none';
+        document.getElementById('permissionWarning').innerHTML = `
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Location services not supported:</strong> This device/browser doesn't support location services required for emergency response.
+        `;
+    }
+    
+    // Show mobile-specific instructions
+    if (isMobile) {
+        document.getElementById('permissionInfo').innerHTML = `
+            <i class="fas fa-mobile-alt"></i>
+            <strong>Mobile Instructions:</strong><br>
+            1. Tap "Start Monitoring" below<br>
+            2. Allow motion sensor access when prompted<br>
+            3. Allow location access when prompted<br>
+            4. Shake your device to test detection
+        `;
+    }
+}
+
+// Load alerts on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadAlerts();
+    checkDeviceCapabilities();
+});
+</script>
+{% endblock %}

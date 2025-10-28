@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}Login - AutoRescue{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card shadow">
+            <div class="card-body p-5">
+                <div class="text-center mb-4">
+                    <i class="fas fa-ambulance fa-3x text-danger mb-3"></i>
+                    <h2 class="card-title">AutoRescue</h2>
+                    <p class="text-muted">Smart Accident Detection System</p>
+                </div>
+
+                <div class="mb-3">
+                    <ul class="nav nav-tabs" id="authTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="login-tab" data-bs-toggle="tab" data-bs-target="#login" type="button" role="tab">
+                                Login
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="register-tab" data-bs-toggle="tab" data-bs-target="#register" type="button" role="tab">
+                                Register
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="tab-content" id="authTabsContent">
+                    <!-- Login Form -->
+                    <div class="tab-pane fade show active" id="login" role="tabpanel">
+                        <form id="loginForm">
+                            <div class="mb-3">
+                                <label for="loginUsername" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="loginUsername" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="loginPassword" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="loginPassword" required>
+                            </div>
+                            <button type="submit" class="btn btn-danger w-100">
+                                <i class="fas fa-sign-in-alt"></i> Login
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Register Form -->
+                    <div class="tab-pane fade" id="register" role="tabpanel">
+                        <form id="registerForm">
+                            <div class="mb-3">
+                                <label for="registerUsername" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="registerUsername" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="registerEmail" class="form-label">Email</label>
+                                <input type="email" class="form-control" id="registerEmail" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="registerPassword" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="registerPassword" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="fas fa-user-plus"></i> Register
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-info-circle"></i> Demo Credentials</h6>
+                        <small>
+                            <strong>Admin:</strong> admin / admin123<br>
+                            <strong>Driver:</strong> Register a new account
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const username = document.getElementById('loginUsername').value;
+    const password = document.getElementById('loginPassword').value;
+    
+    try {
+        const response = await fetch('/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            window.location.href = '/dashboard';
+        } else {
+            alert('Login failed: ' + data.message);
+        }
+    } catch (error) {
+        alert('Login error: ' + error.message);
+    }
+});
+
+document.getElementById('registerForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const username = document.getElementById('registerUsername').value;
+    const email = document.getElementById('registerEmail').value;
+    const password = document.getElementById('registerPassword').value;
+    
+    try {
+        const response = await fetch('/register', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ username, email, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('Registration successful! Please login.');
+            document.getElementById('login-tab').click();
+        } else {
+            alert('Registration failed: ' + data.message);
+        }
+    } catch (error) {
+        alert('Registration error: ' + error.message);
+    }
+});
+</script>
+{% endblock %}
