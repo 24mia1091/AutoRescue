@@ -23,6 +23,11 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(120), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
+    is_ambulance_driver = db.Column(db.Boolean, default=False)
+    driver_id = db.Column(db.String(50), unique=True, nullable=True)  # Ambulance driver ID
+    current_latitude = db.Column(db.Float, nullable=True)
+    current_longitude = db.Column(db.Float, nullable=True)
+    is_available = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Alert(db.Model):
@@ -35,7 +40,10 @@ class Alert(db.Model):
     details = db.Column(db.Text)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     impact_magnitude = db.Column(db.Float, nullable=True)
-    status = db.Column(db.String(20), default='pending')  # pending, verified, dispatched, resolved
+    status = db.Column(db.String(20), default='pending')  # pending, verified, dispatched, accepted, resolved
+    assigned_ambulance_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
 
 # API Routes
 @app.route('/')
@@ -56,7 +64,12 @@ def login():
         session['user_id'] = user.id
         session['username'] = user.username
         session['is_admin'] = user.is_admin
-        return jsonify({'success': True, 'is_admin': user.is_admin})
+        session['is_ambulance_driver'] = user.is_ambulance_driver
+        return jsonify({
+            'success': True, 
+            'is_admin': user.is_admin,
+            'is_ambulance_driver': user.is_ambulance_driver
+        })
     else:
         return jsonify({'success': False, 'message': 'Invalid credentials'})
 
@@ -96,6 +109,8 @@ def dashboard():
     
     if session.get('is_admin'):
         return render_template('admin_dashboard.html')
+    elif session.get('is_ambulance_driver'):
+        return render_template('ambulance_dashboard.html')
     else:
         return render_template('driver_dashboard.html')
 
@@ -146,7 +161,10 @@ def get_alerts():
             'resolved': alert.resolved,
             'details': alert.details,
             'impact_magnitude': alert.impact_magnitude,
-            'status': alert.status
+            'status': alert.status,
+            'assigned_ambulance_id': alert.assigned_ambulance_id,
+            'accepted_at': alert.accepted_at.isoformat() if alert.accepted_at else None,
+            'resolved_at': alert.resolved_at.isoformat() if alert.resolved_at else None
         })
     
     return jsonify(alerts_data)
@@ -188,6 +206,120 @@ def dispatch_alert(alert_id):
     
     return jsonify({'success': True, 'message': 'Alert dispatched to responders'})
 
+@app.route('/api/ambulance/update-location', methods=['POST'])
+def update_ambulance_location():
+    if 'user_id' not in session or not session.get('is_ambulance_driver'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json()
+    user = User.query.get(session['user_id'])
+    
+    if user:
+        user.current_latitude = data.get('latitude')
+        user.current_longitude = data.get('longitude')
+        db.session.commit()
+        return jsonify({'success': True})
+    
+    return jsonify({'error': 'User not found'}), 404
+
+@app.route('/api/ambulance/accept-alert/<int:alert_id>', methods=['POST'])
+def accept_alert(alert_id):
+    if 'user_id' not in session or not session.get('is_ambulance_driver'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    alert = Alert.query.get_or_404(alert_id)
+    
+    # Check if alert is already accepted
+    if alert.status == 'accepted':
+        return jsonify({'error': 'Alert already accepted by another driver'}), 400
+    
+    # Update alert status
+    alert.status = 'accepted'
+    alert.assigned_ambulance_id = session['user_id']
+    alert.accepted_at = datetime.utcnow()
+    
+    # Mark driver as unavailable
+    user = User.query.get(session['user_id'])
+    if user:
+        user.is_available = False
+    
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': 'Alert accepted successfully'})
+
+@app.route('/api/ambulance/resolve-alert/<int:alert_id>', methods=['POST'])
+def resolve_alert_by_ambulance(alert_id):
+    if 'user_id' not in session or not session.get('is_ambulance_driver'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    alert = Alert.query.get_or_404(alert_id)
+    
+    # Check if this driver is assigned to this alert
+    if alert.assigned_ambulance_id != session['user_id']:
+        return jsonify({'error': 'Not authorized to resolve this alert'}), 403
+    
+    # Update alert status
+    alert.status = 'resolved'
+    alert.resolved = True
+    alert.resolved_at = datetime.utcnow()
+    
+    # Mark driver as available again
+    user = User.query.get(session['user_id'])
+    if user:
+        user.is_available = True
+    
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': 'Alert resolved successfully'})
+
+@app.route('/api/ambulance/alerts')
+def get_ambulance_alerts():
+    if 'user_id' not in session or not session.get('is_ambulance_driver'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Get dispatched alerts (not yet accepted)
+    dispatched_alerts = Alert.query.filter_by(status='dispatched').all()
+    
+    alerts_data = []
+    for alert in dispatched_alerts:
+        alerts_data.append({
+            'id': alert.id,
+            'alert_type': alert.alert_type,
+            'latitude': alert.latitude,
+            'longitude': alert.longitude,
+            'timestamp': alert.timestamp.isoformat(),
+            'details': alert.details,
+            'impact_magnitude': alert.impact_magnitude,
+            'status': alert.status
+        })
+    
+    return jsonify(alerts_data)
+
+@app.route('/api/ambulance/my-alerts')
+def get_my_ambulance_alerts():
+    if 'user_id' not in session or not session.get('is_ambulance_driver'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Get alerts assigned to this driver
+    my_alerts = Alert.query.filter_by(assigned_ambulance_id=session['user_id']).order_by(Alert.timestamp.desc()).all()
+    
+    alerts_data = []
+    for alert in my_alerts:
+        alerts_data.append({
+            'id': alert.id,
+            'alert_type': alert.alert_type,
+            'latitude': alert.latitude,
+            'longitude': alert.longitude,
+            'timestamp': alert.timestamp.isoformat(),
+            'accepted_at': alert.accepted_at.isoformat() if alert.accepted_at else None,
+            'resolved_at': alert.resolved_at.isoformat() if alert.resolved_at else None,
+            'details': alert.details,
+            'impact_magnitude': alert.impact_magnitude,
+            'status': alert.status
+        })
+    
+    return jsonify(alerts_data)
+
 @app.route('/api/health')
 def health_check():
     return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
@@ -208,6 +340,21 @@ if __name__ == '__main__':
             db.session.add(admin)
             db.session.commit()
             print("Admin user created: username=admin, password=admin123")
+        
+        # Create sample ambulance driver if it doesn't exist
+        ambulance = User.query.filter_by(username='ambulance1').first()
+        if not ambulance:
+            ambulance = User(
+                username='ambulance1',
+                email='ambulance1@autorescue.com',
+                password_hash=generate_password_hash('ambulance123'),
+                is_ambulance_driver=True,
+                driver_id='AMB001',
+                is_available=True
+            )
+            db.session.add(ambulance)
+            db.session.commit()
+            print("Ambulance driver created: username=ambulance1, password=ambulance123")
     
     # Optional HTTPS support for mobile geolocation (required by browsers over network)
     # Configure via env:

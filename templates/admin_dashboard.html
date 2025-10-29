@@ -300,8 +300,11 @@ function openAlertModal(alertId) {
                 <h6>Location Details</h6>
                 <p><strong>Latitude:</strong> ${alert.latitude.toFixed(6)}</p>
                 <p><strong>Longitude:</strong> ${alert.longitude.toFixed(6)}</p>
-                <p><strong>Details:</strong> ${alert.details}</p>
-                ${alert.impact_magnitude ? `<p><strong>Impact Magnitude:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+                        <p><strong>Details:</strong> ${alert.details}</p>
+                        ${alert.impact_magnitude ? `<p><strong>Impact Magnitude:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+                        ${alert.assigned_ambulance_id ? `<p><strong>Assigned Ambulance:</strong> ID ${alert.assigned_ambulance_id}</p>` : ''}
+                        ${alert.accepted_at ? `<p><strong>Accepted At:</strong> ${new Date(alert.accepted_at).toLocaleString()}</p>` : ''}
+                        ${alert.resolved_at ? `<p><strong>Resolved At:</strong> ${new Date(alert.resolved_at).toLocaleString()}</p>` : ''}
             </div>
         </div>
         <div class="row mt-3">

@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+
+{% block title %}Ambulance Dashboard - AutoRescue{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="fas fa-ambulance"></i> Ambulance Driver Dashboard</h2>
+            <div class="d-flex align-items-center">
+                <span class="me-3">Status:</span>
+                <span class="badge" id="availabilityStatus">Available</span>
+                <button class="btn btn-sm btn-outline-primary ms-2" id="toggleAvailability" onclick="toggleAvailability()">
+                    Toggle Status
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Emergency Alert Popup -->
+<div class="modal fade" id="emergencyPopup" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content border-danger">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-exclamation-triangle"></i> EMERGENCY ALERT
+                </h5>
+            </div>
+            <div class="modal-body" id="emergencyAlertBody">
+                <!-- Emergency details will be loaded here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-success btn-lg" id="acceptAlertBtn" onclick="acceptEmergencyAlert()">
+                    <i class="fas fa-check"></i> ACCEPT ALERT
+                </button>
+                <button type="button" class="btn btn-secondary" id="declineAlertBtn" onclick="declineEmergencyAlert()">
+                    <i class="fas fa-times"></i> DECLINE
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Current Location -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-map-marker-alt"></i> Current Location</h5>
+            </div>
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <button class="btn btn-primary" onclick="updateLocation()">
+                        <i class="fas fa-crosshairs"></i> Update Location
+                    </button>
+                </div>
+                <div id="currentLocation">
+                    <p class="text-muted">Location not available</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Available Alerts -->
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-bell"></i> Available Alerts</h5>
+            </div>
+            <div class="card-body">
+                <div id="availableAlerts">
+                    <div class="text-center text-muted">
+                        <i class="fas fa-inbox fa-2x mb-2"></i>
+                        <p>No alerts available</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- My Assigned Alerts -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-tasks"></i> My Assigned Alerts</h5>
+            </div>
+            <div class="card-body">
+                <div id="myAlerts">
+                    <div class="text-center text-muted">
+                        <i class="fas fa-inbox fa-2x mb-2"></i>
+                        <p>No assigned alerts</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentAlertId = null;
+let isAvailable = true;
+let locationUpdateInterval = null;
+
+// Update location
+async function updateLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            async (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                
+                // Update UI
+                document.getElementById('currentLocation').innerHTML = `
+                    <p><strong>Latitude:</strong> ${lat.toFixed(6)}</p>
+                    <p><strong>Longitude:</strong> ${lng.toFixed(6)}</p>
+                    <small class="text-success">Location updated</small>
+                `;
+                
+                // Send to server
+                try {
+                    const response = await fetch('/api/ambulance/update-location', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            latitude: lat,
+                            longitude: lng
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        showAlert('Location updated successfully', 'success');
+                    }
+                } catch (error) {
+                    console.error('Error updating location:', error);
+                }
+            },
+            (error) => {
+                console.error('Location error:', error);
+                showAlert('Location access denied', 'warning');
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    } else {
+        showAlert('Geolocation not supported', 'warning');
+    }
+}
+
+// Toggle availability status
+async function toggleAvailability() {
+    isAvailable = !isAvailable;
+    const statusBadge = document.getElementById('availabilityStatus');
+    const toggleBtn = document.getElementById('toggleAvailability');
+    
+    if (isAvailable) {
+        statusBadge.className = 'badge bg-success';
+        statusBadge.textContent = 'Available';
+        toggleBtn.textContent = 'Mark Unavailable';
+        startLocationUpdates();
+    } else {
+        statusBadge.className = 'badge bg-danger';
+        statusBadge.textContent = 'Unavailable';
+        toggleBtn.textContent = 'Mark Available';
+        stopLocationUpdates();
+    }
+    
+    showAlert(`Status changed to ${isAvailable ? 'Available' : 'Unavailable'}`, 'info');
+}
+
+// Start automatic location updates
+function startLocationUpdates() {
+    if (locationUpdateInterval) {
+        clearInterval(locationUpdateInterval);
+    }
+    
+    // Update location every 30 seconds
+    locationUpdateInterval = setInterval(updateLocation, 30000);
+}
+
+// Stop location updates
+function stopLocationUpdates() {
+    if (locationUpdateInterval) {
+        clearInterval(locationUpdateInterval);
+        locationUpdateInterval = null;
+    }
+}
+
+// Load available alerts
+async function loadAvailableAlerts() {
+    try {
+        const response = await fetch('/api/ambulance/alerts');
+        const alerts = await response.json();
+        
+        const alertsContainer = document.getElementById('availableAlerts');
+        
+        if (alerts.length === 0) {
+            alertsContainer.innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-inbox fa-2x mb-2"></i>
+                    <p>No alerts available</p>
+                </div>
+            `;
+            return;
+        }
+        
+        alertsContainer.innerHTML = alerts.map(alert => `
+            <div class="alert alert-warning alert-dismissible fade show">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="alert-heading">
+                            <i class="fas fa-${alert.alert_type === 'Accident' ? 'car-crash' : 'exclamation-triangle'}"></i>
+                            ${alert.alert_type} Alert #${alert.id}
+                        </h6>
+                        <p class="mb-1">
+                            <strong>Location:</strong> ${alert.latitude.toFixed(6)}, ${alert.longitude.toFixed(6)}
+                        </p>
+                        <p class="mb-1">
+                            <strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}
+                        </p>
+                        <p class="mb-1">
+                            <strong>Details:</strong> ${alert.details}
+                        </p>
+                        ${alert.impact_magnitude ? `<p class="mb-0"><strong>Impact:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+                    </div>
+                    <div>
+                        <button class="btn btn-success btn-sm" onclick="acceptAlert(${alert.id})">
+                            <i class="fas fa-check"></i> Accept
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        
+    } catch (error) {
+        console.error('Error loading alerts:', error);
+    }
+}
+
+// Load my assigned alerts
+async function loadMyAlerts() {
+    try {
+        const response = await fetch('/api/ambulance/my-alerts');
+        const alerts = await response.json();
+        
+        const alertsContainer = document.getElementById('myAlerts');
+        
+        if (alerts.length === 0) {
+            alertsContainer.innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-inbox fa-2x mb-2"></i>
+                    <p>No assigned alerts</p>
+                </div>
+            `;
+            return;
+        }
+        
+        alertsContainer.innerHTML = alerts.map(alert => `
+            <div class="alert ${alert.status === 'resolved' ? 'alert-success' : 'alert-info'}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6 class="alert-heading">
+                            <i class="fas fa-${alert.alert_type === 'Accident' ? 'car-crash' : 'exclamation-triangle'}"></i>
+                            ${alert.alert_type} Alert #${alert.id}
+                        </h6>
+                        <p class="mb-1">
+                            <strong>Location:</strong> ${alert.latitude.toFixed(6)}, ${alert.longitude.toFixed(6)}
+                        </p>
+                        <p class="mb-1">
+                            <strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}
+                        </p>
+                        <p class="mb-1">
+                            <strong>Details:</strong> ${alert.details}
+                        </p>
+                        ${alert.impact_magnitude ? `<p class="mb-1"><strong>Impact:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+                        <p class="mb-1">
+                            <strong>Accepted:</strong> ${alert.accepted_at ? new Date(alert.accepted_at).toLocaleString() : 'N/A'}
+                        </p>
+                        ${alert.resolved_at ? `<p class="mb-0"><strong>Resolved:</strong> ${new Date(alert.resolved_at).toLocaleString()}</p>` : ''}
+                    </div>
+                    <div class="text-end">
+                        <span class="badge ${alert.status === 'accepted' ? 'bg-warning' : 'bg-success'}">
+                            ${alert.status.charAt(0).toUpperCase() + alert.status.slice(1)}
+                        </span>
+                        ${alert.status === 'accepted' ? `
+                            <button class="btn btn-success btn-sm mt-2" onclick="resolveAlert(${alert.id})">
+                                <i class="fas fa-check-circle"></i> Mark Resolved
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        
+    } catch (error) {
+        console.error('Error loading my alerts:', error);
+    }
+}
+
+// Accept alert
+async function acceptAlert(alertId) {
+    try {
+        const response = await fetch(`/api/ambulance/accept-alert/${alertId}`, {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('Alert accepted successfully!', 'success');
+            loadAvailableAlerts();
+            loadMyAlerts();
+        } else {
+            showAlert('Failed to accept alert: ' + result.error, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('Error accepting alert:', error);
+        showAlert('Error accepting alert: ' + error.message, 'danger');
+    }
+}
+
+// Resolve alert
+async function resolveAlert(alertId) {
+    if (!confirm('Are you sure you want to mark this alert as resolved?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/ambulance/resolve-alert/${alertId}`, {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showAlert('Alert resolved successfully!', 'success');
+            loadMyAlerts();
+        } else {
+            showAlert('Failed to resolve alert: ' + result.error, 'danger');
+        }
+        
+    } catch (error) {
+        console.error('Error resolving alert:', error);
+        showAlert('Error resolving alert: ' + error.message, 'danger');
+    }
+}
+
+// Show emergency popup
+function showEmergencyPopup(alert) {
+    currentAlertId = alert.id;
+    
+    document.getElementById('emergencyAlertBody').innerHTML = `
+        <div class="alert alert-danger">
+            <h6><i class="fas fa-exclamation-triangle"></i> ${alert.alert_type} Alert #${alert.id}</h6>
+            <p><strong>Location:</strong> ${alert.latitude.toFixed(6)}, ${alert.longitude.toFixed(6)}</p>
+            <p><strong>Time:</strong> ${new Date(alert.timestamp).toLocaleString()}</p>
+            <p><strong>Details:</strong> ${alert.details}</p>
+            ${alert.impact_magnitude ? `<p><strong>Impact:</strong> ${alert.impact_magnitude.toFixed(1)} m/s²</p>` : ''}
+        </div>
+        <div class="text-center">
+            <p class="text-muted">A new emergency has been dispatched to your area. Do you want to accept this alert?</p>
+        </div>
+    `;
+    
+    const modal = new bootstrap.Modal(document.getElementById('emergencyPopup'));
+    modal.show();
+}
+
+// Accept emergency alert from popup
+async function acceptEmergencyAlert() {
+    if (currentAlertId) {
+        await acceptAlert(currentAlertId);
+        bootstrap.Modal.getInstance(document.getElementById('emergencyPopup')).hide();
+    }
+}
+
+// Decline emergency alert
+function declineEmergencyAlert() {
+    bootstrap.Modal.getInstance(document.getElementById('emergencyPopup')).hide();
+    currentAlertId = null;
+}
+
+// Check for new alerts (for popup notifications)
+async function checkForNewAlerts() {
+    if (!isAvailable) return;
+    
+    try {
+        const response = await fetch('/api/ambulance/alerts');
+        const alerts = await response.json();
+        
+        // Show popup for new alerts
+        alerts.forEach(alert => {
+            // Check if this is a new alert (you might want to track seen alerts)
+            if (alert.id !== currentAlertId) {
+                showEmergencyPopup(alert);
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error checking for new alerts:', error);
+    }
+}
+
+// Show alert message
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.querySelector('.container').insertBefore(alertDiv, document.querySelector('.container').firstChild);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+
+// Auto-refresh every 10 seconds
+setInterval(() => {
+    loadAvailableAlerts();
+    loadMyAlerts();
+    checkForNewAlerts();
+}, 10000);
+
+// Load data on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadAvailableAlerts();
+    loadMyAlerts();
+    updateLocation();
+    startLocationUpdates();
+});
+</script>
+{% endblock %}
